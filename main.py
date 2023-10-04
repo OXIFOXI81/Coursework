@@ -2,7 +2,14 @@ import json
 import requests
 import os
 import datetime
-import pprint
+from pprint import pprint
+
+token_ya ='OAuth ...'
+token_vk = 'vk1.a.wCE...'
+
+user_vk = '327085850'
+url_ya = 'https://cloud-api.yandex.net:443/v1/disk'
+namedir='photo'
 
 class VK:
 
@@ -13,7 +20,7 @@ class VK:
            self.params = {'access_token': self.token, 'v': self.version}
            self.token = access_token
 
-        def get_picture(self, user_vk,offset=0, count=50):
+        def get_picture(self, user_vk):
 
             url = 'https://api.vk.com/method/photos.get'
             params = {'owner_id': user_vk,
@@ -29,12 +36,13 @@ class YaUploader:
     def __init__(self, token: str):
         self.token = token
 
-    def upload(self, file_path: str,photo: str):
+    def upload(self, file_path: str,photo: str,url: str,namedir: str):
         """Метод загружает файлы по списку file_list на яндекс диск"""
-        url='https://cloud-api.yandex.net:443/v1/disk'
+
         str= photo + '.jpg'
         params = {
-            "path": "FROM_VK/"+str
+            "path": namedir+"/"+str,
+            'overwrite': 'true'
         }
         headers = {
             "Authorization": self.token
@@ -44,77 +52,134 @@ class YaUploader:
             print(response.status_code)
 
         rr = requests.get(url + r"/resources/upload", headers=headers, params=params)
-
+        # print(rr.json())
         href_for_load = rr.json()["href"]
 
-
+        # # Получение ссылки на загрузку
+        # # href = response.json().get('href')
+        #
+        # # Загрузка файла
+        # uploader = requests.put(href, data=open(files_path, 'rb'))
         with open(file_path +'\\'+str, 'rb') as file:
             response2 = requests.put(href_for_load, files={"file": file})
 
+    def uploadStrong(self,url_vk:str,photo: str,url_ya: str,namedir: str):
+
+        urlvk=requests.get(url_vk)
+        str = photo + '.jpg'
+        params = {
+            "path": namedir + "/" + str,
+            'overwrite': 'true'
+        }
+        headers = {
+            "Authorization": self.token
+        }
+        # response = requests.get(url_ya, headers=headers)
+        # if 200 <= response.status_code < 300:
+        #     print(response.status_code)
+
+        rr = requests.get(url_ya + r"/resources/upload", headers=headers, params=params)
+        url_for_load = rr.json()["href"]
+        load=requests.put(url_for_load, data=urlvk)
+        # print(load.status_code)
+    def create_dir(self,namedir: str,url: str):
+
+        params = {
+            'path': f'{namedir}',
+            'overwrite': 'false'
+        }
+        headers = {
+            "Authorization": self.token
+        }
+        response = requests.put(url=url+ r"/resources", headers=headers, params=params)
+        return (response)
+    def exists_dir(self,namedir: str,url: str):
+
+        params = {
+            'path': f'{namedir}',
+            'overwrite': 'false'
+        }
+        headers = {
+            "Authorization": self.token
+        }
+        response=requests.get(url=url+ r"/resources", headers=headers, params=params)
+        return (response)
+
+
+def Input_Output(token_vk,user_vk,token_ya,url_ya,namedir):
+
+    vk = VK(token_vk)
+    dataFromVK = vk.get_picture(user_vk)
+    # YADisk
+    uploader = YaUploader(token_ya)
+    uploader.exists_dir(namedir,url_ya)
+    uploader.create_dir(namedir,url_ya)
+
+    # # Создаём папку на компьютере для скачивания фотографий
+    # if not os.path.exists('Pictures_from_vk'):
+    #     os.mkdir('Pictures_from_vk')
+    url_pict = []
+    with open("log_file.txt", 'w', encoding='utf-8') as log:
+        log.write('Начинаем считывание информации с VK \n')
+
+    for pict in dataFromVK['response']['items']:
+
+        max_size = 0
+        for pict_size in pict['sizes']:
+               if pict_size['height'] >= max_size:
+                   max_size = pict_size['height']
+                   max_list=pict_size
+        url_pict.append({
+                    'url':  max_list['url'],
+                    'likes': pict['likes']['count'],
+                    'date': pict['date'],
+                    'type':  max_list['type']
+                })
+
+    # Cортируем и отбираем 5 фото
+
+    al = []
+    for ob in url_pict:
+        al.append(str(ob["likes"]) + "|" + datetime.datetime.fromtimestamp(ob["date"]).strftime(
+            "%Y-%m-%d_%H-%M-%S") + "|" + ob["url"] + "|" + ob["type"])
+    al.sort(reverse=True)
+    like_pred = ''
+    pict_json = []
+    for i in range(0, 5):
+        like, dated, url_vk_pict,type = al[i].split('|')
+
+        if like == like_pred :
+            pict_name = like + '_' + dated
+        else:
+            pict_name = like
+        pict_json.append({
+            'file_name': pict_name + '.jpeg',
+            'size': type,
+            'likes': like
+        })
+        like_pred = like
+
+        # Скачиваем фотографии c VK  и записываем на ЯД
+
+        # with open('Pictures_from_vk/%s' % f'{pict_name}.jpg', 'wb') as file:
+        #     img = requests.get(url)
+        #     file.write(img.content)
+        uploader.uploadStrong(url_vk_pict,pict_name,url_ya,namedir)
+
+
+        with open("log_file.txt", 'a', encoding='utf-8') as log:
+            log.write(f'считана и записана фотография - {pict_name}.jpg \n')
+    with open("pictures.json", "w") as file:
+        json.dump(pict_json, file, indent=4)
+    with open("log_file.txt", 'a', encoding='utf-8') as log:
+        log.write(f'Фотографии записаны на ЯндексДиск в папку : https://disk.yandex.ru/client/disk/{namedir} \n')
+
 
 if __name__ == '__main__':
- token_vk='vk1.a...'
- user_vk ='327085850'
-# VK
- vk = VK(token_vk)
- dataFromVK =vk.get_picture(user_vk)
-# YADisk
- token_ya = 'OAuth ...'
- uploader = YaUploader(token_ya)
-
-# # Создаём папку на компьютере для скачивания фотографий
- if not os.path.exists('Pictures_from_vk'):
-       os.mkdir('Pictures_from_vk')
- url_pict=[]
- with open("log_file.txt",'w', encoding='utf-8') as log:
-    log.write('Начинаем считывание информации с VK \n')
-
- for pict in dataFromVK['response']['items']:
-    for pict_size in pict['sizes']:
-      if pict_size['type']=='z':
-           url_pict.append({
-             'url': pict_size['url'],
-             'likes': pict['likes']['count'],
-             'date': pict['date']
-           })
-
-# Cортируем и отбираем 5 фото
-#  pprint.pprint(url_pict)
- al=[]
- for ob in url_pict:
-    al.append(str(ob["likes"]) + "|" + datetime.datetime.fromtimestamp(ob["date"]).strftime(
-        "%Y-%m-%d_%H-%M-%S") + "|" + ob["url"])
- al.sort(reverse=True)
- like_pred=''
- pict_json = []
- for i in range(0,5):
-     like,dated,url=al[i].split('|')
-    # print(f'like={like},{dated},{url}')
-     if like==like_pred or like=='0':
-        pict_name=like+'_'+dated
-     else:
-        pict_name=like
-     pict_json.append({
-         'file_name': pict_name+'.jpeg',
-         'size': 'z',
-         'likes': like
-      })
-     like_pred=like
+    # with open("Token.txt", 'a', encoding='utf-8') as tok:
 
 
- # Скачиваем фотографии c VK  и записываем на ЯД
-     with open('Pictures_from_vk/%s' % f'{pict_name}.jpg', 'wb') as file:
-                     img = requests.get(url)
-                     file.write(img.content)
-                     uploader.upload('Pictures_from_vk', pict_name)
-     with open("log_file.txt",'a', encoding='utf-8') as log:
-                     log.write(f'считана и записана фотография - {pict_name}.jpg \n')
- with open("pictures.json", "w") as file:
-                json.dump(pict_json, file, indent=4)
- with open("log_file.txt", 'a', encoding='utf-8') as log:
-                log.write(f'Фотографии записаны на ЯндексДиск в папку : https://disk.yandex.ru/client/disk/FROM_VK \n')
-
-
+        Input_Output(token_vk, user_vk, token_ya,url_ya,namedir)
 
 
 
